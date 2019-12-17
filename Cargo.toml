@@ -1,0 +1,14 @@
+[package]
+name = "pure-rust"
+version = "0.1.0"
+authors = ["Steve Cooper <steve.cooper@anaplan.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+weedle = "0.9.0"
+failure = "0.1"
+nom = "5.0.1"
+pom = "3.0.3"
+combine = "3.8.1"
