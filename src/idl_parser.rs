@@ -2,7 +2,6 @@ extern crate pom;
 use pom::parser::*;
 use pom::Parser;
 use self::pom::char_class::{alpha, alphanum, multispace};
-use std::fs::read;
 
 #[derive(Debug, PartialEq)]
 pub struct Interface {
@@ -63,12 +62,17 @@ fn interface() -> Parser<u8, Interface> {
     })
 }
 
+fn idl() -> Parser<u8, Vec<Interface>> {
+    interface().repeat(0..)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::error::Error;
 
     #[test]
-    fn parse_keywords() {
+    fn parse_keywords() -> Result<(), Box<dyn Error>> {
         assert_eq!(Ok(()), (sym(b'>').discard() * space() * sym(b'<').discard()).parse(b"> \n \r \t <"));
 
         assert_eq!(Ok(Interface { name: String::from("foo"), members:vec![]}), interface().parse(b"interface foo { }"));
@@ -95,6 +99,20 @@ mod test {
         assert_eq!(member_list().parse(r"
 readonly attribute DOMString value;
 attribute HTMLElement body;".as_bytes()), Ok(expected));
+
+        let valid_so_far: Vec<u8> = std::fs::read("assets/valid_so_far.idl")?;
+
+        let valid_slice: &[u8] = &valid_so_far[0..];
+
+        //let parse_res = idl().parse(valid_slice);
+
+        println![ "file was {} characters long", valid_so_far.len()];
+//        match idl().parse(&valid_slice) {
+//            Ok(_) => Ok(()),
+//            Err(e) => panic!(format!("error! {:?}", e))
+//        }
+
+        Ok(())
 
     }
 }

@@ -3,7 +3,7 @@ mod idl_parser;
 pub(crate) type Result<T> = std::result::Result<T, failure::Error>;
 
 pub fn run_generator() -> Result<()> {
-    let f = std::fs::read_to_string("assets/html5_partial.idl")?;
+    let f = std::fs::read_to_string("assets/valid_so_far.idl")?;
 
     let parse_result = weedle::parse(&f);
 
