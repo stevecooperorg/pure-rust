@@ -38,14 +38,17 @@ fn member() -> Parser<u8, Member> {
     let typ = space() * name();
     let nam = space() * name();
 
-    let member_inner = readonly - attribute + typ + nam;
+    let member_raw = readonly - attribute + typ + nam  - space() - sym(b';');
 
-
-    member_inner.map(move |((readonly, typ), name)| Member::Attribute(AttributeDef {
+    member_raw.map(move |((readonly, typ), name)| Member::Attribute(AttributeDef {
         readonly,
         name,
         typ
     }))
+}
+
+fn member_list() -> Parser<u8, Vec<Member>> {
+    member().repeat(0..)
 }
 
 fn interface() -> Parser<u8, Interface> {
@@ -66,8 +69,7 @@ mod test {
 
     #[test]
     fn parse_keywords() {
-        assert_eq!(Ok(()), space().parse(b"x"));
-        assert_eq!(Ok(()), space().parse(b"  x"));
+        assert_eq!(Ok(()), (sym(b'>').discard() * space() * sym(b'<').discard()).parse(b"> \n \r \t <"));
 
         assert_eq!(Ok(Interface { name: String::from("foo"), members:vec![]}), interface().parse(b"interface foo { }"));
 
@@ -77,6 +79,22 @@ mod test {
             typ: String::from("DOMString")
         })), member().parse(b"readonly attribute DOMString value;"));
 
+        let expected = vec![
+            Member::Attribute(AttributeDef {
+                readonly: true,
+                name: String::from("value"),
+                typ: String::from("DOMString")
+            }),
+            Member::Attribute(AttributeDef {
+                readonly: false,
+                name: String::from("body"),
+                typ: String::from("HTMLElement")
+            }),
+        ];
+
+        assert_eq!(member_list().parse(r"
+readonly attribute DOMString value;
+attribute HTMLElement body;".as_bytes()), Ok(expected));
 
     }
 }
