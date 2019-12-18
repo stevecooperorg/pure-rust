@@ -153,6 +153,30 @@ attribute HTMLElement body;",
                 }),
             ]
         );
+
+        assert_consumes_all!(
+            interface(),
+            b"interface Window {
+           readonly attribute DOMString label;
+           attribute boolean defaultSelected;
+};
+",
+            Interface {
+                name: String::from("Window"),
+                members: vec![
+                    Member::Attribute(AttributeDef {
+                        readonly: true,
+                        name: String::from("label"),
+                        typ: String::from("DOMString"),
+                    }),
+                    Member::Attribute(AttributeDef {
+                        readonly: false,
+                        name: String::from("defaultSelected"),
+                        typ: String::from("boolean"),
+                    }),
+                ]
+            }
+        );
     }
 
     #[test]
