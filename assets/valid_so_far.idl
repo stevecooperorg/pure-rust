@@ -1,3 +1,4 @@
 interface Window {
-    readonly attribute Storage sessionStorage;
+           attribute DOMString label;
+           attribute boolean defaultSelected;
 };
