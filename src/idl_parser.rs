@@ -2,6 +2,8 @@ extern crate pom;
 use pom::parser::*;
 use pom::Parser;
 use self::pom::char_class::{alpha, alphanum, multispace};
+use std::path::Path;
+use failure::Error;
 
 #[derive(Debug, PartialEq)]
 pub struct Interface {
@@ -70,9 +72,10 @@ fn idl() -> Parser<u8, Vec<Interface>> {
 mod test {
     use super::*;
     use std::error::Error;
+    use std::path::Path;
 
     #[test]
-    fn parse_keywords() -> Result<(), Box<dyn Error>> {
+    fn parse_keywords() {
         assert_eq!(Ok(()), (sym(b'>').discard() * space() * sym(b'<').discard()).parse(b"> \n \r \t <"));
 
         assert_eq!(Ok(Interface { name: String::from("foo"), members:vec![]}), interface().parse(b"interface foo { }"));
@@ -100,19 +103,26 @@ mod test {
 readonly attribute DOMString value;
 attribute HTMLElement body;".as_bytes()), Ok(expected));
 
-        let valid_so_far: Vec<u8> = std::fs::read("assets/valid_so_far.idl")?;
+    }
 
-        let valid_slice: &[u8] = &valid_so_far[0..];
+    #[test]
+    fn parse_files() {
+        let byte_vec: Vec<u8> = match std::fs::read("assets/valid_so_far.idl") {
+            Ok(x) => x,
+            Err(_) => panic!["nope"]
+        };
 
-        //let parse_res = idl().parse(valid_slice);
+        let byte_slice: &[u8] = &byte_vec;
+        let idl_parser = idl();
+        let parse_result = idl_parser.parse(byte_slice).unwrap();
+    }
 
-        println![ "file was {} characters long", valid_so_far.len()];
+    //let parse_res = idl().parse(valid_slice);
+
+//        println![ "file was {} characters long", valid_so_far.len()];
 //        match idl().parse(&valid_slice) {
 //            Ok(_) => Ok(()),
-//            Err(e) => panic!(format!("error! {:?}", e))
+//            Err(e) =>  Err(Box::new(e))
 //        }
-
-        Ok(())
-
-    }
+    //}
 }
