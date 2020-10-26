@@ -48,8 +48,11 @@ pub enum Member {
     Setter(SetterDef),
 }
 
-fn space<'a>() -> Parser<'a, u8, ()> {
+fn ws<'a>() -> Parser<'a, u8, ()> {
     is_a(multispace).repeat(0..).discard()
+}
+fn space<'a>() -> Parser<'a, u8, ()> {
+    ws() | comment()
 }
 
 fn spaced<'a, T>(parser: Parser<'a, u8, T>) -> Parser<'a, u8, T>
@@ -57,6 +60,32 @@ where
     T: 'a,
 {
     space() * parser - space()
+}
+
+fn is_cr(term: u8) -> bool {
+    term == b'\r'
+}
+
+fn is_lf(term: u8) -> bool {
+    term == b'\n'
+}
+
+fn eol<'a>() -> Parser<'a, u8, ()> {
+    ((is_a(is_cr) * is_a(is_lf)) | is_a(is_lf) | is_a(is_cr)).discard()
+}
+
+fn to_eol<'a>() -> Parser<'a, u8, String> {
+    fn anything_else(term: u8) -> bool {
+        !is_cr(term) && !is_lf(term)
+    }
+
+    is_a(anything_else)
+        .repeat(0..)
+        .map(|u8s| String::from_utf8(u8s).expect("can only parse utf"))
+}
+
+fn comment<'a>() -> Parser<'a, u8, ()> {
+    (seq(b"//") * to_eol() - eol()).discard()
 }
 
 fn name<'a>() -> Parser<'a, u8, String> {
@@ -76,7 +105,6 @@ fn semi<'a>() -> Parser<'a, u8, ()> {
 
 fn attribute<'a>() -> Parser<'a, u8, Member> {
     // attribute DOMString value;
-    let x = b"readonly";
     let readonly = spaced(seq(b"readonly"))
         .discard()
         .opt()
@@ -167,6 +195,8 @@ fn idl<'a>() -> Parser<'a, u8, Vec<Interface>> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pom::Error;
+    use std::cmp::min;
 
     macro_rules! assert_consumes_all {
         ( $ parser: expr, $input: expr ) => {
@@ -194,9 +224,18 @@ mod test {
 
     #[test]
     fn parse_keywords() {
+        assert_consumes_all![eol(), b"\r"];
+        assert_consumes_all![eol(), b"\r\n"];
+        assert_consumes_all![eol(), b"\n"];
+
         assert_consumes_all![space(), b""];
         assert_consumes_all![space(), b"  "];
         assert_consumes_all![space(), b"  \t \n \r "];
+
+        assert_consumes_all![comment(), b"//\r"];
+        assert_consumes_all![comment(), b"//\n"];
+        assert_consumes_all![comment(), b"//\r\n"];
+        assert_consumes_all![comment(), b"// xyz \r\n"];
 
         assert_consumes_all!(
             argument(),
@@ -362,17 +401,44 @@ attribute HTMLElement body;",
         assert_parse_file(file_path_str);
     }
 
-    //#[test]
+    // fn count_lines(file_path_str: &str) {
+    //     let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
+    //      let byte_slice: &[u8] = &byte_vec;
+    //     let idl_parser = idl() - space() - end();
+    //
+    //     let (input, 0).map(|(out, _)| out)
+    //
+    //     let parse_result =  idl_parser.parse(byte_slice).unwrap();
+    //
+    //         let lines =
+    // }
+
+    #[test]
+    fn line_counter_works() {}
+
+    #[test]
     fn parse_full_html5_file() {
-        let file_path_str = "assets/html5.idl";
+        let file_path_str = "assets/html5_ordered_by_steve.idl";
         assert_parse_file(file_path_str);
     }
 
     fn assert_parse_file(file_path_str: &str) {
         let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
+        let file_content =
+            String::from_utf8(byte_vec.clone()).expect("should be able to read the file");
         let byte_slice: &[u8] = &byte_vec;
         let idl_parser = idl() - space() - end();
-        let parse_result = idl_parser.parse(byte_slice).unwrap();
+        let parse_result = match idl_parser.parse(byte_slice) {
+            Ok(parse_result) => parse_result,
+            Err(pom::Error::Mismatch { message, position }) => {
+                let end = min(position + 400, file_content.len() - position);
+                let extract = &file_content[position..end];
+                let better_message =
+                    format!("{} at {}\n<<<---\n{}\n--->>>", message, position, extract);
+                panic!(better_message)
+            }
+            Err(e) => panic!("{}", e),
+        };
         println!("{:?}", parse_result);
     }
 }
