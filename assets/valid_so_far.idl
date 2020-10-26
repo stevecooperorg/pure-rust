@@ -13,3 +13,8 @@ interface DOMStringMap {
   setter creator void (DOMString name, DOMString value);
   deleter void (DOMString name);
 };
+
+interface RadioNodeList : NodeList {
+          attribute DOMString value;
+};
+

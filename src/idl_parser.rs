@@ -1,10 +1,10 @@
-use failure::Error;
 use pom::char_class::{alpha, alphanum, multispace};
 use pom::parser::*;
 
 #[derive(Debug, PartialEq)]
 pub struct Interface {
     name: String,
+    supr: Option<String>,
     members: Vec<Member>,
 }
 
@@ -52,19 +52,40 @@ fn space<'a>() -> Parser<'a, u8, ()> {
     is_a(multispace).repeat(0..).discard()
 }
 
+fn spaced<'a, T>(parser: Parser<'a, u8, T>) -> Parser<'a, u8, T>
+where
+    T: 'a,
+{
+    space() * parser - space()
+}
+
 fn name<'a>() -> Parser<'a, u8, String> {
-    (is_a(alpha) + is_a(alphanum).repeat(0..))
-        .map(|(first, rest)| format!("{}{}", first as char, String::from_utf8(rest).unwrap()))
+    let it = (is_a(alpha) + is_a(alphanum).repeat(0..))
+        .map(|(first, rest)| format!("{}{}", first as char, String::from_utf8(rest).unwrap()));
+
+    spaced(it).name("name")
+}
+
+fn typ<'a>() -> Parser<'a, u8, String> {
+    spaced(name()).name("type")
+}
+
+fn semi<'a>() -> Parser<'a, u8, ()> {
+    spaced(sym(b';')).discard().name("semi")
 }
 
 fn attribute<'a>() -> Parser<'a, u8, Member> {
     // attribute DOMString value;
-    let readonly = space() * seq(b"readonly").discard().opt().map(|ro| ro.is_some());
-    let attribute = space() * seq(b"attribute").discard() * space();
-    let typ = space() * name();
-    let nam = space() * name();
+    let x = b"readonly";
+    let readonly = spaced(seq(b"readonly"))
+        .discard()
+        .opt()
+        .map(|ro| ro.is_some());
+    let attribute = spaced(seq(b"attribute")).discard();
+    let typ = typ();
+    let nam = name();
 
-    let member_raw = readonly - attribute + typ + nam - space() - sym(b';');
+    let member_raw = readonly - attribute + typ + nam - semi();
 
     member_raw.map(move |((readonly, typ), name)| {
         Member::Attribute(AttributeDef {
@@ -76,22 +97,19 @@ fn attribute<'a>() -> Parser<'a, u8, Member> {
 }
 
 fn argument<'a>() -> Parser<'a, u8, ArgDef> {
-    let typ = space() * name();
-    let name = space() * name();
-    let parser_raw = typ + name - space();
+    let parser_raw = typ() + name();
     parser_raw.map(move |(typ, name)| ArgDef { name, typ })
 }
 fn argument_list<'a>() -> Parser<'a, u8, Vec<ArgDef>> {
-    list(argument(), sym(b',') - space())
+    spaced(list(argument(), sym(b',')))
 }
 
 fn getter<'a>() -> Parser<'a, u8, Member> {
     // getter DOMString (DOMString name, DOMString value);
     let args = argument_list();
-    let getter = space() * seq(b"getter").discard() * space();
-    let typ = space() * name();
+    let getter = spaced(seq(b"getter")).discard();
 
-    let getter_raw = getter * typ - space() - sym(b'(') + args - sym(b')') - sym(b';');
+    let getter_raw = getter * typ() - sym(b'(') + args - sym(b')') - semi();
 
     getter_raw.map(move |(typ, args)| Member::Getter(GetterDef { args, typ }))
 }
@@ -99,10 +117,10 @@ fn getter<'a>() -> Parser<'a, u8, Member> {
 fn deleter<'a>() -> Parser<'a, u8, Member> {
     // deleter void (DOMString name);
     let args = argument_list();
-    let getter = space() * seq(b"deleter").discard() * space();
-    let typ = space() * name();
+    let getter = spaced(seq(b"deleter")).discard();
+    let typ = typ();
 
-    let deleter_raw = getter * typ - space() - sym(b'(') + args - sym(b')') - sym(b';');
+    let deleter_raw = getter * typ - sym(b'(') + args - sym(b')') - semi();
 
     deleter_raw.map(move |(typ, args)| Member::Deleter(DeleterDef { args, typ }))
 }
@@ -110,12 +128,11 @@ fn deleter<'a>() -> Parser<'a, u8, Member> {
 fn setter<'a>() -> Parser<'a, u8, Member> {
     // setter creator void (DOMString name, DOMString value);
     let args = argument_list();
-    let setter = space() * seq(b"setter").discard() * space();
-    let nam = (space() * name()).name("name");
-    let typ = (space() * name()).name("type");
+    let setter = spaced(seq(b"setter")).discard();
+    let nam = name();
+    let typ = typ();
 
-    let setter_raw =
-        setter * nam - space() + typ - space() - sym(b'(') + args - sym(b')') - sym(b';');
+    let setter_raw = setter * nam + typ - sym(b'(') + args - sym(b')') - semi();
 
     setter_raw.map(move |((name, typ), args)| Member::Setter(SetterDef { name, args, typ }))
 }
@@ -129,12 +146,18 @@ fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
 }
 
 fn interface<'a>() -> Parser<'a, u8, Interface> {
-    let interface_start = seq(b"interface") * space() * name() - space() - sym(b'{');
+    let interface_start = spaced(seq(b"interface")).discard() * name()
+        + (spaced(sym(b':')) * name()).opt()
+        - spaced(sym(b'{'));
 
-    let interface_close = space() - sym(b'}') - space() - sym(b';') - space();
+    let interface_close = spaced(sym(b'}')) - semi();
     let interface = interface_start + member_list() - interface_close;
 
-    interface.map(|(name, members)| Interface { name, members })
+    interface.map(|((name, supr), members)| Interface {
+        name,
+        supr,
+        members,
+    })
 }
 
 fn idl<'a>() -> Parser<'a, u8, Vec<Interface>> {
@@ -144,9 +167,6 @@ fn idl<'a>() -> Parser<'a, u8, Vec<Interface>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::error::Error;
-    use std::fmt::Display;
-    //use std::path::Path;
 
     macro_rules! assert_consumes_all {
         ( $ parser: expr, $input: expr ) => {
@@ -272,12 +292,23 @@ mod test {
             b"interface foo {};",
             Interface {
                 name: String::from("foo"),
+                supr: None,
                 members: vec![]
             }
         ];
         assert_consumes_all!(
             interface(),
             b"interface foo { attribute DOMString value; };"
+        );
+
+        assert_consumes_all!(
+            interface(),
+            b"interface foo : bar { };",
+            Interface {
+                name: "foo".into(),
+                supr: Some("bar".into()),
+                members: vec![]
+            }
         );
 
         assert_consumes_all!(
@@ -308,6 +339,7 @@ attribute HTMLElement body;",
 ",
             Interface {
                 name: String::from("Window"),
+                supr: None,
                 members: vec![
                     Member::Attribute(AttributeDef {
                         readonly: true,
