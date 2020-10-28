@@ -401,22 +401,21 @@ attribute HTMLElement body;",
         assert_parse_file(file_path_str);
     }
 
-    // fn count_lines(file_path_str: &str) -> usize {
-    //     let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
-    //     let byte_slice: &[u8] = &byte_vec;
-    //     let line_parser = list(to_eol(), eol() | end());
-    //
-    //     let parse_result = line_parser.parse(byte_slice).unwrap();
-    //
-    //     parse_result.len()
-    // }
-    //
-    // #[test]
-    // fn line_counter_works() {
-    //     let file_path_str = "assets/html5.idl";
-    //     let actual = count_lines(file_path_str);
-    //     assert_eq!(10, actual);
-    // }
+    fn count_lines(byte_slice: &[u8]) -> usize {
+        let line_parser = (to_eol() - eol()).repeat(0..); // (to_eol() + (eol() | end())).discard().repeat(0..);
+
+        let parse_result = line_parser.parse(byte_slice).unwrap();
+
+        parse_result.len()
+    }
+
+    #[test]
+    fn line_counter_works() {
+        let file_path_str = "assets/html5.idl";
+        let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
+        let actual = count_lines(&byte_vec);
+        assert_eq!(1388, actual);
+    }
 
     #[test]
     fn parse_full_html5_file() {
