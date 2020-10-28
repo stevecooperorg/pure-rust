@@ -41,11 +41,19 @@ pub struct SetterDef {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct FunctionDef {
+    args: Vec<ArgDef>,
+    name: String,
+    typ: String,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Member {
     Attribute(AttributeDef),
     Getter(GetterDef),
     Deleter(DeleterDef),
     Setter(SetterDef),
+    Function(FunctionDef),
 }
 
 fn ws<'a>() -> Parser<'a, u8, ()> {
@@ -70,6 +78,18 @@ fn is_lf(term: u8) -> bool {
     term == b'\n'
 }
 
+fn lit<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
+    spaced(seq(literal)).discard().name("literal")
+}
+
+fn op<'a>() -> Parser<'a, u8, ()> {
+    lit(b"(")
+}
+
+fn cl<'a>() -> Parser<'a, u8, ()> {
+    lit(b")")
+}
+
 fn eol<'a>() -> Parser<'a, u8, ()> {
     ((is_a(is_cr) * is_a(is_lf)) | is_a(is_lf) | is_a(is_cr)).discard()
 }
@@ -84,6 +104,10 @@ fn to_eol<'a>() -> Parser<'a, u8, String> {
         .map(|u8s| String::from_utf8(u8s).expect("can only parse utf"))
 }
 
+fn semi<'a>() -> Parser<'a, u8, ()> {
+    lit(b";").name("semi")
+}
+
 fn comment<'a>() -> Parser<'a, u8, ()> {
     (seq(b"//") * to_eol() - eol()).discard()
 }
@@ -96,15 +120,16 @@ fn name<'a>() -> Parser<'a, u8, String> {
 }
 
 fn typ<'a>() -> Parser<'a, u8, String> {
-    spaced(name()).name("type")
-}
+    //(VideoTrack or AudioTrack or TextTrack)
+    let compound_type =
+        (op() * list(name(), lit(b"or")) - cl()).map(|names| "compound".to_string());
 
-fn lit<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
-    spaced(seq(literal)).discard().name("literal")
-}
+    //AudioTrack
+    let simple_type = name();
 
-fn semi<'a>() -> Parser<'a, u8, ()> {
-    lit(b";").name("semi")
+    // TODO optional - eg (A or B)?
+
+    (compound_type | simple_type).name("type")
 }
 
 fn attribute<'a>() -> Parser<'a, u8, Member> {
@@ -135,25 +160,30 @@ fn argument_list<'a>() -> Parser<'a, u8, Vec<ArgDef>> {
 
 fn getter<'a>() -> Parser<'a, u8, Member> {
     // getter DOMString (DOMString name, DOMString value);
-    let getter_raw = lit(b"getter") * typ() - lit(b"(") + argument_list() - lit(b")") - semi();
+    let getter_raw = lit(b"getter") * typ() - op() + argument_list() - cl() - semi();
     getter_raw.map(move |(typ, args)| Member::Getter(GetterDef { args, typ }))
 }
 
 fn deleter<'a>() -> Parser<'a, u8, Member> {
     // deleter void (DOMString name);
-    let deleter_raw = lit(b"deleter") * typ() - lit(b"(") + argument_list() - lit(b")") - semi();
+    let deleter_raw = lit(b"deleter") * typ() - op() + argument_list() - cl() - semi();
     deleter_raw.map(move |(typ, args)| Member::Deleter(DeleterDef { args, typ }))
 }
 
 fn setter<'a>() -> Parser<'a, u8, Member> {
     // setter creator void (DOMString name, DOMString value);
-    let setter_raw =
-        lit(b"setter") * name() + typ() - lit(b"(") + argument_list() - lit(b")") - semi();
+    let setter_raw = lit(b"setter") * name() + typ() - op() + argument_list() - cl() - semi();
     setter_raw.map(move |((name, typ), args)| Member::Setter(SetterDef { name, args, typ }))
 }
 
+fn function<'a>() -> Parser<'a, u8, Member> {
+    //HTMLAllCollection tags(DOMString tagName);
+    let function_raw = typ() + name() - op() + argument_list() - cl() - semi();
+    function_raw.map(|((typ, name), args)| Member::Function(FunctionDef { name, args, typ }))
+}
+
 fn member<'a>() -> Parser<'a, u8, Member> {
-    attribute() | getter() | setter() | deleter()
+    attribute() | getter() | setter() | deleter() | function()
 }
 
 fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
@@ -221,6 +251,9 @@ mod test {
         assert_consumes_all![comment(), b"//\n"];
         assert_consumes_all![comment(), b"//\r\n"];
         assert_consumes_all![comment(), b"// xyz \r\n"];
+
+        assert_consumes_all![typ(), b"TypeName"];
+        assert_consumes_all![typ(), b"(TypeName1 or TypeName2)"];
 
         assert_consumes_all!(
             argument(),
@@ -296,6 +329,19 @@ mod test {
                 }],
                 name: "creator".into(),
                 typ: "void".into(),
+            })
+        );
+
+        assert_consumes_all!(
+            member(),
+            b"HTMLAttribute read (ArgType name);",
+            Member::Function(FunctionDef {
+                args: vec![ArgDef {
+                    name: "name".into(),
+                    typ: "ArgType".into(),
+                }],
+                name: "read".into(),
+                typ: "HTMLAttribute".into(),
             })
         );
 
@@ -409,7 +455,6 @@ attribute HTMLElement body;",
     }
 
     fn assert_parse_file(file_path_str: &str) {
-        //assert!(false, "whoops");
         let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
         let file_content =
             String::from_utf8(byte_vec.clone()).expect("should be able to read the file");
