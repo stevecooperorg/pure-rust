@@ -49,10 +49,10 @@ pub enum Member {
 }
 
 fn ws<'a>() -> Parser<'a, u8, ()> {
-    is_a(multispace).repeat(0..).discard()
+    is_a(multispace).discard()
 }
 fn space<'a>() -> Parser<'a, u8, ()> {
-    ws() | comment()
+    (ws() | comment()).repeat(0..).discard()
 }
 
 fn spaced<'a, T>(parser: Parser<'a, u8, T>) -> Parser<'a, u8, T>
@@ -99,17 +99,18 @@ fn typ<'a>() -> Parser<'a, u8, String> {
     spaced(name()).name("type")
 }
 
+fn lit<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
+    spaced(seq(literal)).discard().name("literal")
+}
+
 fn semi<'a>() -> Parser<'a, u8, ()> {
-    spaced(sym(b';')).discard().name("semi")
+    lit(b";").name("semi")
 }
 
 fn attribute<'a>() -> Parser<'a, u8, Member> {
     // attribute DOMString value;
-    let readonly = spaced(seq(b"readonly"))
-        .discard()
-        .opt()
-        .map(|ro| ro.is_some());
-    let attribute = spaced(seq(b"attribute")).discard();
+    let readonly = lit(b"readonly").opt().map(|ro| ro.is_some());
+    let attribute = lit(b"attribute");
     let typ = typ();
     let nam = name();
 
@@ -134,34 +135,20 @@ fn argument_list<'a>() -> Parser<'a, u8, Vec<ArgDef>> {
 
 fn getter<'a>() -> Parser<'a, u8, Member> {
     // getter DOMString (DOMString name, DOMString value);
-    let args = argument_list();
-    let getter = spaced(seq(b"getter")).discard();
-
-    let getter_raw = getter * typ() - sym(b'(') + args - sym(b')') - semi();
-
+    let getter_raw = lit(b"getter") * typ() - lit(b"(") + argument_list() - lit(b")") - semi();
     getter_raw.map(move |(typ, args)| Member::Getter(GetterDef { args, typ }))
 }
 
 fn deleter<'a>() -> Parser<'a, u8, Member> {
     // deleter void (DOMString name);
-    let args = argument_list();
-    let getter = spaced(seq(b"deleter")).discard();
-    let typ = typ();
-
-    let deleter_raw = getter * typ - sym(b'(') + args - sym(b')') - semi();
-
+    let deleter_raw = lit(b"deleter") * typ() - lit(b"(") + argument_list() - lit(b")") - semi();
     deleter_raw.map(move |(typ, args)| Member::Deleter(DeleterDef { args, typ }))
 }
 
 fn setter<'a>() -> Parser<'a, u8, Member> {
     // setter creator void (DOMString name, DOMString value);
-    let args = argument_list();
-    let setter = spaced(seq(b"setter")).discard();
-    let nam = name();
-    let typ = typ();
-
-    let setter_raw = setter * nam + typ - sym(b'(') + args - sym(b')') - semi();
-
+    let setter_raw =
+        lit(b"setter") * name() + typ() - lit(b"(") + argument_list() - lit(b")") - semi();
     setter_raw.map(move |((name, typ), args)| Member::Setter(SetterDef { name, args, typ }))
 }
 
@@ -174,13 +161,10 @@ fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
 }
 
 fn interface<'a>() -> Parser<'a, u8, Interface> {
-    let interface_start = spaced(seq(b"interface")).discard() * name()
-        + (spaced(sym(b':')) * name()).opt()
-        - spaced(sym(b'{'));
-
-    let interface_close = spaced(sym(b'}')) - semi();
-    let interface = interface_start + member_list() - interface_close;
-
+    let interface = lit(b"interface") * name() + (lit(b":") * name()).opt() - lit(b"{")
+        + member_list()
+        - lit(b"}")
+        - semi();
     interface.map(|((name, supr), members)| Interface {
         name,
         supr,
@@ -195,6 +179,7 @@ fn idl<'a>() -> Parser<'a, u8, Vec<Interface>> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pom::set::Set;
     use pom::Error;
     use std::cmp::min;
 
@@ -424,6 +409,7 @@ attribute HTMLElement body;",
     }
 
     fn assert_parse_file(file_path_str: &str) {
+        //assert!(false, "whoops");
         let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
         let file_content =
             String::from_utf8(byte_vec.clone()).expect("should be able to read the file");
@@ -432,10 +418,18 @@ attribute HTMLElement body;",
         let parse_result = match idl_parser.parse(byte_slice) {
             Ok(parse_result) => parse_result,
             Err(pom::Error::Mismatch { message, position }) => {
-                let end = min(position + 400, file_content.len() - position);
+                let start_str = &byte_vec[0..position];
+                let line = count_lines(start_str) + 1;
+                let start_str = std::str::from_utf8(start_str).unwrap();
+                let end = min(position + 20, file_content.len() - position);
                 let extract = &file_content[position..end];
-                let better_message =
-                    format!("{} at {}\n<<<---\n{}\n--->>>", message, position, extract);
+                let err_location = format!("{}:{}:{}", file_path_str, line, 1);
+                // thread 'idl_parser::test::parse_full_html5_file' panicked at 'whoops', src/idl_parser.rs:428:9
+                let better_message = format!(
+                    "thread 'idl_parser::test::parse_full_html5_file' panicked at '{}', {}",
+                    extract, err_location
+                );
+                println!("{}", better_message);
                 panic!(better_message)
             }
             Err(e) => panic!("{}", e),
