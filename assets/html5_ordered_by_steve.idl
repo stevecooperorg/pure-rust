@@ -16,21 +16,13 @@ interface HTMLTemplateElement : HTMLElement {
   readonly attribute DocumentFragment content;
 };
 
-
-interface HTMLAllCollection : HTMLCollection {
-  // inherits length and item(unsigned long index)
-  (HTMLCollection or Element)? item(DOMString name);
-  (HTMLCollection or Element) item(DOMString name);
-  //legacycaller getter (HTMLCollection or Element)? namedItem(DOMString name); // shadows inherited namedItem()
-  HTMLAllCollection tags(DOMString tagName);
-};
-
 interface HTMLAllCollection : HTMLCollection {
   // inherits length and item(unsigned long index)
   (HTMLCollection or Element)? item(DOMString name);
   legacycaller getter (HTMLCollection or Element)? namedItem(DOMString name); // shadows inherited namedItem()
   HTMLAllCollection tags(DOMString tagName);
 };
+
 interface HTMLFormControlsCollection : HTMLCollection {
   // inherits length and item()
   legacycaller getter (RadioNodeList or Element)? namedItem(DOMString name); // shadows inherited namedItem()

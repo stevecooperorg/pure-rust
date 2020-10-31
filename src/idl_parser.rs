@@ -12,39 +12,74 @@ pub struct Interface {
 pub struct AttributeDef {
     readonly: bool,
     name: String,
-    typ: String,
+    typ: TypeDef,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct ArgDef {
     name: String,
-    typ: String,
+    typ: TypeDef,
+    default_value: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct GetterDef {
     args: Vec<ArgDef>,
-    typ: String,
+    name: Option<String>,
+    typ: TypeDef,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TypeDef {
+    names: Vec<String>,
+    optional: bool,
+}
+
+impl TypeDef {
+    fn from_str(s: &str) -> Self {
+        TypeDef {
+            names: vec![s.to_string()],
+            optional: false,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct DeleterDef {
     args: Vec<ArgDef>,
-    typ: String,
+    typ: TypeDef,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct SetterDef {
     args: Vec<ArgDef>,
     name: String,
-    typ: String,
+    typ: TypeDef,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ImplementsStmt {
+    typ: TypeDef,
+    implements: TypeDef,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct FunctionDef {
     args: Vec<ArgDef>,
     name: String,
-    typ: String,
+    typ: TypeDef,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct IndexerDef {
+    args: Vec<ArgDef>,
+    typ: TypeDef,
+}
+
+#[derive(Debug, PartialEq)]
+enum Statement {
+    Interface(Interface),
+    ImplementsStmt(ImplementsStmt),
 }
 
 #[derive(Debug, PartialEq)]
@@ -52,6 +87,7 @@ pub enum Member {
     Attribute(AttributeDef),
     Getter(GetterDef),
     Deleter(DeleterDef),
+    Indexer(IndexerDef),
     Setter(SetterDef),
     Function(FunctionDef),
 }
@@ -78,16 +114,22 @@ fn is_lf(term: u8) -> bool {
     term == b'\n'
 }
 
-fn lit<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
-    spaced(seq(literal)).discard().name("literal")
+fn keyword<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
+    spaced(seq(literal)).discard().name("keyword")
+}
+
+fn literal<'a>(literal: &'static [u8]) -> Parser<'a, u8, String> {
+    spaced(seq(literal))
+        .map(|u8s| String::from_utf8(u8s.to_vec()).expect("can only parse utf"))
+        .name("literal")
 }
 
 fn op<'a>() -> Parser<'a, u8, ()> {
-    lit(b"(")
+    keyword(b"(")
 }
 
 fn cl<'a>() -> Parser<'a, u8, ()> {
-    lit(b")")
+    keyword(b")")
 }
 
 fn eol<'a>() -> Parser<'a, u8, ()> {
@@ -105,7 +147,7 @@ fn to_eol<'a>() -> Parser<'a, u8, String> {
 }
 
 fn semi<'a>() -> Parser<'a, u8, ()> {
-    lit(b";").name("semi")
+    keyword(b";").name("semi")
 }
 
 fn comment<'a>() -> Parser<'a, u8, ()> {
@@ -119,27 +161,29 @@ fn name<'a>() -> Parser<'a, u8, String> {
     spaced(it).name("name")
 }
 
-fn typ<'a>() -> Parser<'a, u8, String> {
+fn type_name<'a>() -> Parser<'a, u8, String> {
+    literal(b"unsigned long") | name()
+}
+
+fn typ<'a>() -> Parser<'a, u8, TypeDef> {
     //(VideoTrack or AudioTrack or TextTrack)
-    let compound_type =
-        (op() * list(name(), lit(b"or")) - cl()).map(|names| "compound".to_string());
+    let compound_type = (op() * list(type_name(), keyword(b"or")) - cl()).map(|names| names);
 
     //AudioTrack
-    let simple_type = name();
+    let simple_type = type_name().map(|n| vec![n]);
 
     // TODO optional - eg (A or B)?
+    let is_optional = keyword(b"?").opt().map(|x| x.is_some());
 
-    (compound_type | simple_type).name("type")
+    ((compound_type | simple_type) + is_optional)
+        .map(|(names, optional)| TypeDef { names, optional })
 }
 
 fn attribute<'a>() -> Parser<'a, u8, Member> {
     // attribute DOMString value;
-    let readonly = lit(b"readonly").opt().map(|ro| ro.is_some());
-    let attribute = lit(b"attribute");
-    let typ = typ();
-    let nam = name();
-
-    let member_raw = readonly - attribute + typ + nam - semi();
+    let readonly = keyword(b"readonly").opt().map(|ro| ro.is_some());
+    let attribute = keyword(b"attribute");
+    let member_raw = readonly - attribute + typ() + name() - semi();
 
     member_raw.map(move |((readonly, typ), name)| {
         Member::Attribute(AttributeDef {
@@ -150,40 +194,80 @@ fn attribute<'a>() -> Parser<'a, u8, Member> {
     })
 }
 
+fn value<'a>() -> Parser<'a, u8, String> {
+    name()
+}
+
+fn implements_stmt<'a>() -> Parser<'a, u8, ImplementsStmt> {
+    // Foo implements Bar;
+    let raw = typ() - keyword(b"implements") + typ() - semi();
+    raw.map(|(typ, implements)| ImplementsStmt { typ, implements })
+}
+
 fn argument<'a>() -> Parser<'a, u8, ArgDef> {
-    let parser_raw = typ() + name();
-    parser_raw.map(move |(typ, name)| ArgDef { name, typ })
+    // (HTMLOptionElement or HTMLOptGroupElement) element, optional (HTMLElement or long)? before = null
+    let parser_raw = keyword(b"optional").opt() * typ() + name() + (keyword(b"=") * value()).opt();
+    parser_raw.map(move |((typ, name), default_value)| ArgDef {
+        name,
+        typ,
+        default_value,
+    })
 }
 fn argument_list<'a>() -> Parser<'a, u8, Vec<ArgDef>> {
     spaced(list(argument(), sym(b',')))
 }
 
+fn attrib<'a>() -> Parser<'a, u8, ()> {
+    // [PutForwards=value]
+    // [OverrideBuiltins]
+    // [NamedConstructor=Audio(optional DOMString src)]
+    (keyword(b"[") * name() - keyword(b"]")).discard()
+}
+
 fn getter<'a>() -> Parser<'a, u8, Member> {
     // getter DOMString (DOMString name, DOMString value);
-    let getter_raw = lit(b"getter") * typ() - op() + argument_list() - cl() - semi();
-    getter_raw.map(move |(typ, args)| Member::Getter(GetterDef { args, typ }))
+    let getter_raw = keyword(b"legacycaller").opt() * keyword(b"getter") * typ() + name().opt()
+        - op()
+        + argument_list()
+        - cl()
+        - semi();
+    getter_raw.map(move |((typ, name), args)| Member::Getter(GetterDef { args, name, typ }))
+}
+
+fn indexer<'a>() -> Parser<'a, u8, Member> {
+    // DOMString (DOMString name, DOMString value);
+    let indexer_raw =
+        keyword(b"legacycaller").opt() * typ() - op() + argument_list() - cl() - semi();
+    indexer_raw.map(move |(typ, args)| Member::Indexer(IndexerDef { args, typ }))
 }
 
 fn deleter<'a>() -> Parser<'a, u8, Member> {
     // deleter void (DOMString name);
-    let deleter_raw = lit(b"deleter") * typ() - op() + argument_list() - cl() - semi();
+    let deleter_raw = keyword(b"legacycaller").opt() * keyword(b"deleter") * typ() - op()
+        + argument_list()
+        - cl()
+        - semi();
     deleter_raw.map(move |(typ, args)| Member::Deleter(DeleterDef { args, typ }))
 }
 
 fn setter<'a>() -> Parser<'a, u8, Member> {
     // setter creator void (DOMString name, DOMString value);
-    let setter_raw = lit(b"setter") * name() + typ() - op() + argument_list() - cl() - semi();
+    let setter_raw = keyword(b"legacycaller").opt() * keyword(b"setter") * name() + typ() - op()
+        + argument_list()
+        - cl()
+        - semi();
     setter_raw.map(move |((name, typ), args)| Member::Setter(SetterDef { name, args, typ }))
 }
 
 fn function<'a>() -> Parser<'a, u8, Member> {
     //HTMLAllCollection tags(DOMString tagName);
-    let function_raw = typ() + name() - op() + argument_list() - cl() - semi();
+    let function_raw =
+        keyword(b"legacycaller").opt() * typ() + name() - op() + argument_list() - cl() - semi();
     function_raw.map(|((typ, name), args)| Member::Function(FunctionDef { name, args, typ }))
 }
 
 fn member<'a>() -> Parser<'a, u8, Member> {
-    attribute() | getter() | setter() | deleter() | function()
+    attribute() | getter() | indexer() | setter() | deleter() | function()
 }
 
 fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
@@ -191,9 +275,11 @@ fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
 }
 
 fn interface<'a>() -> Parser<'a, u8, Interface> {
-    let interface = lit(b"interface") * name() + (lit(b":") * name()).opt() - lit(b"{")
+    let interface = attrib().repeat(0..) * keyword(b"interface") * name()
+        + (keyword(b":") * name()).opt()
+        - keyword(b"{")
         + member_list()
-        - lit(b"}")
+        - keyword(b"}")
         - semi();
     interface.map(|((name, supr), members)| Interface {
         name,
@@ -202,23 +288,27 @@ fn interface<'a>() -> Parser<'a, u8, Interface> {
     })
 }
 
-fn idl<'a>() -> Parser<'a, u8, Vec<Interface>> {
-    interface().repeat(0..)
+fn stmt<'a>() -> Parser<'a, u8, Statement> {
+    interface().map(|i| Statement::Interface(i))
+        | implements_stmt().map(|i| Statement::ImplementsStmt(i))
+}
+
+fn idl<'a>() -> Parser<'a, u8, Vec<Statement>> {
+    stmt().repeat(0..)
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use pom::set::Set;
-    use pom::Error;
     use std::cmp::min;
+    use std::error::Error;
 
     macro_rules! assert_consumes_all {
         ( $ parser: expr, $input: expr ) => {
             let terminating_parser = $parser - space() - end();
             let res = terminating_parser.parse($input);
             if let Err(e) = res {
-                panic!("parser failed to match and consume everthing")
+                panic!("parser failed to match and consume everything")
             }
         };
         ( $ parser: expr, $input: expr, $expected: expr) => {
@@ -231,14 +321,14 @@ mod test {
                 }
                 Err(e) => {
                     //
-                    panic!("parser failed to match and consume everthing")
+                    panic!("parser failed to match and consume everything")
                 }
             }
         };
     }
 
     #[test]
-    fn parse_keywords() {
+    fn parse_keywords() -> Result<(), Box<dyn Error>> {
         assert_consumes_all![eol(), b"\r"];
         assert_consumes_all![eol(), b"\r\n"];
         assert_consumes_all![eol(), b"\n"];
@@ -255,27 +345,60 @@ mod test {
         assert_consumes_all![typ(), b"TypeName"];
         assert_consumes_all![typ(), b"(TypeName1 or TypeName2)"];
 
+        assert_consumes_all!(argument(), b"ArgType name");
+        assert_consumes_all!(argument(), b"optional ArgType name");
+        assert_consumes_all!(argument(), b"ArgType name = null");
         assert_consumes_all!(
             argument(),
             b"ArgType name",
             ArgDef {
-                typ: "ArgType".into(),
-                name: "name".into()
+                typ: TypeDef::from_str("ArgType"),
+                name: "name".into(),
+                default_value: None
             }
         );
+
+        assert_consumes_all!(
+            implements_stmt(),
+            b"ArrayBuffer implements Transferable;",
+            ImplementsStmt {
+                typ: TypeDef::from_str("ArrayBuffer"),
+                implements: TypeDef::from_str("Transferable")
+            }
+        );
+
+        assert_consumes_all!(attrib(), b"[OverrideBuiltins]");
+        // assert_consumes_all!(attrib(), b"[PutForwards=value]");
+        // assert_consumes_all!(
+        //     attrib(),
+        //     b"[NamedConstructor=Audio(optional DOMString src)]"
+        // );
+
         assert_consumes_all!(
             argument_list(),
             b"ArgType1 name1, ArgType2 name2",
             vec![
                 ArgDef {
-                    typ: "ArgType1".into(),
-                    name: "name1".into()
+                    typ: TypeDef::from_str("ArgType1"),
+                    name: "name1".into(),
+                    default_value: None
                 },
                 ArgDef {
-                    typ: "ArgType2".into(),
-                    name: "name2".into()
+                    typ: TypeDef::from_str("ArgType2"),
+                    name: "name2".into(),
+                    default_value: None
                 }
             ]
+        );
+
+        assert_consumes_all!(type_name(), b"unsigned long");
+        assert_consumes_all!(type_name(), b"DomString");
+
+        assert_consumes_all!(typ(), b"HTMLOptionElement?");
+        assert_consumes_all!(member(), b"attribute DomString length;");
+        assert_consumes_all!(
+            member(),
+            b"legacycaller HTMLOptionElement? (DOMString name);"
         );
 
         assert_consumes_all!(
@@ -284,7 +407,7 @@ mod test {
             Member::Attribute(AttributeDef {
                 readonly: false,
                 name: String::from("value"),
-                typ: String::from("DOMString"),
+                typ: TypeDef::from_str("DOMString"),
             })
         );
 
@@ -294,7 +417,7 @@ mod test {
             Member::Attribute(AttributeDef {
                 readonly: true,
                 name: String::from("value"),
-                typ: String::from("DOMString"),
+                typ: TypeDef::from_str("DOMString"),
             })
         );
 
@@ -303,7 +426,18 @@ mod test {
             b"getter ReturnType ();",
             Member::Getter(GetterDef {
                 args: vec![],
-                typ: String::from("ReturnType"),
+                name: None,
+                typ: TypeDef::from_str("ReturnType"),
+            })
+        );
+
+        assert_consumes_all!(
+            member(),
+            b"legacycaller getter ReturnType namedItem();",
+            Member::Getter(GetterDef {
+                args: vec![],
+                name: Some("namedItem".into()),
+                typ: TypeDef::from_str("ReturnType"),
             })
         );
 
@@ -313,9 +447,11 @@ mod test {
             Member::Getter(GetterDef {
                 args: vec![ArgDef {
                     name: String::from("name"),
-                    typ: String::from("ArgType"),
+                    typ: TypeDef::from_str("ArgType"),
+                    default_value: None
                 }],
-                typ: String::from("ReturnType"),
+                name: None,
+                typ: TypeDef::from_str("ReturnType"),
             })
         );
 
@@ -325,10 +461,11 @@ mod test {
             Member::Setter(SetterDef {
                 args: vec![ArgDef {
                     name: "name".into(),
-                    typ: "ArgType".into(),
+                    typ: TypeDef::from_str("ArgType"),
+                    default_value: None
                 }],
                 name: "creator".into(),
-                typ: "void".into(),
+                typ: TypeDef::from_str("void"),
             })
         );
 
@@ -338,10 +475,11 @@ mod test {
             Member::Function(FunctionDef {
                 args: vec![ArgDef {
                     name: "name".into(),
-                    typ: "ArgType".into(),
+                    typ: TypeDef::from_str("ArgType"),
+                    default_value: None
                 }],
                 name: "read".into(),
-                typ: "HTMLAttribute".into(),
+                typ: TypeDef::from_str("HTMLAttribute"),
             })
         );
 
@@ -351,9 +489,10 @@ mod test {
             Member::Deleter(DeleterDef {
                 args: vec![ArgDef {
                     name: "name".into(),
-                    typ: "ArgType".into(),
+                    typ: TypeDef::from_str("ArgType"),
+                    default_value: None
                 }],
-                typ: "void".into(),
+                typ: TypeDef::from_str("void"),
             })
         );
 
@@ -390,12 +529,12 @@ attribute HTMLElement body;",
                 Member::Attribute(AttributeDef {
                     readonly: true,
                     name: String::from("value"),
-                    typ: String::from("DOMString"),
+                    typ: TypeDef::from_str("DOMString"),
                 }),
                 Member::Attribute(AttributeDef {
                     readonly: false,
                     name: String::from("body"),
-                    typ: String::from("HTMLElement"),
+                    typ: TypeDef::from_str("HTMLElement"),
                 }),
             ]
         );
@@ -414,16 +553,18 @@ attribute HTMLElement body;",
                     Member::Attribute(AttributeDef {
                         readonly: true,
                         name: String::from("label"),
-                        typ: String::from("DOMString"),
+                        typ: TypeDef::from_str("DOMString"),
                     }),
                     Member::Attribute(AttributeDef {
                         readonly: false,
                         name: String::from("defaultSelected"),
-                        typ: String::from("boolean"),
+                        typ: TypeDef::from_str("boolean"),
                     }),
                 ]
             }
         );
+
+        Ok(())
     }
 
     #[test]
@@ -468,6 +609,11 @@ attribute HTMLElement body;",
                 let start_str = std::str::from_utf8(start_str).unwrap();
                 let end = min(position + 20, file_content.len() - position);
                 let extract = &file_content[position..end];
+                let extract = extract
+                    .to_string()
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r")
+                    .replace("\t", "\\t");
                 let err_location = format!("{}:{}:{}", file_path_str, line, 1);
                 // thread 'idl_parser::test::parse_full_html5_file' panicked at 'whoops', src/idl_parser.rs:428:9
                 let better_message = format!(
