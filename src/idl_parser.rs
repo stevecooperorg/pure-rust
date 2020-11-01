@@ -1,11 +1,24 @@
 use pom::char_class::{alpha, alphanum, multispace};
 use pom::parser::*;
+use std::iter::Cloned;
 
 #[derive(Debug, PartialEq)]
 pub struct Interface {
+    attribs: Vec<AttribDef>,
     name: String,
     supr: Option<String>,
     members: Vec<Member>,
+}
+
+impl Default for Interface {
+    fn default() -> Self {
+        Interface {
+            attribs: vec![],
+            name: "".to_string(),
+            supr: None,
+            members: vec![],
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -13,6 +26,13 @@ pub struct AttributeDef {
     readonly: bool,
     name: String,
     typ: TypeDef,
+    attribs: Vec<AttribDef>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct AttribDef {
+    name: String,
+    value: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -33,6 +53,7 @@ pub struct GetterDef {
 pub struct TypeDef {
     names: Vec<String>,
     optional: bool,
+    is_rest: bool,
 }
 
 impl TypeDef {
@@ -40,6 +61,7 @@ impl TypeDef {
         TypeDef {
             names: vec![s.to_string()],
             optional: false,
+            is_rest: false,
         }
     }
 }
@@ -77,9 +99,17 @@ pub struct IndexerDef {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct EnumDef {
+    options: Vec<String>,
+    name: String,
+}
+
+#[derive(Debug, PartialEq)]
 enum Statement {
     Interface(Interface),
     ImplementsStmt(ImplementsStmt),
+    CallbackStmt(CallbackDef),
+    EnumStmt(EnumDef),
 }
 
 #[derive(Debug, PartialEq)]
@@ -90,6 +120,25 @@ pub enum Member {
     Indexer(IndexerDef),
     Setter(SetterDef),
     Function(FunctionDef),
+}
+
+fn callback<'a>() -> Parser<'a, u8, CallbackDef> {
+    // callback FileCallback = void (File file);
+    (keyword(b"callback") * name() - keyword(b"=") + name() - op() + argument_list()
+        - cl()
+        - semi())
+    .map(|((name, fn_name), args)| CallbackDef {
+        name,
+        fn_name,
+        args,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+pub struct CallbackDef {
+    name: String,
+    fn_name: String,
+    args: Vec<ArgDef>,
 }
 
 fn ws<'a>() -> Parser<'a, u8, ()> {
@@ -132,6 +181,14 @@ fn cl<'a>() -> Parser<'a, u8, ()> {
     keyword(b")")
 }
 
+fn opc<'a>() -> Parser<'a, u8, ()> {
+    keyword(b"{")
+}
+
+fn clc<'a>() -> Parser<'a, u8, ()> {
+    keyword(b"}")
+}
+
 fn eol<'a>() -> Parser<'a, u8, ()> {
     ((is_a(is_cr) * is_a(is_lf)) | is_a(is_lf) | is_a(is_cr)).discard()
 }
@@ -150,8 +207,20 @@ fn semi<'a>() -> Parser<'a, u8, ()> {
     keyword(b";").name("semi")
 }
 
-fn comment<'a>() -> Parser<'a, u8, ()> {
+fn line_comment<'a>() -> Parser<'a, u8, ()> {
     (seq(b"//") * to_eol() - eol()).discard()
+}
+
+fn star_comment<'a>() -> Parser<'a, u8, ()> {
+    fn anything_else(term: u8) -> bool {
+        term != b'*'
+    }
+
+    (seq(b"/*") * is_a(anything_else).repeat(0..) - seq(b"*/")).discard()
+}
+
+fn comment<'a>() -> Parser<'a, u8, ()> {
+    line_comment() | star_comment()
 }
 
 fn name<'a>() -> Parser<'a, u8, String> {
@@ -174,30 +243,42 @@ fn typ<'a>() -> Parser<'a, u8, TypeDef> {
 
     // TODO optional - eg (A or B)?
     let is_optional = keyword(b"?").opt().map(|x| x.is_some());
+    let is_rest = keyword(b"...").opt().map(|x| x.is_some());
 
-    ((compound_type | simple_type) + is_optional)
-        .map(|(names, optional)| TypeDef { names, optional })
+    ((compound_type | simple_type) + is_optional + is_rest).map(|((names, optional), is_rest)| {
+        TypeDef {
+            names,
+            optional,
+            is_rest,
+        }
+    })
 }
 
-fn attribute<'a>() -> Parser<'a, u8, Member> {
-    // attribute DOMString value;
+fn attribute<'a>() -> Parser<'a, u8, AttributeDef> {
+    // [PutForwards=href, Unforgeable] attribute DOMString value;
+    let attribs = attrib_list();
     let readonly = keyword(b"readonly").opt().map(|ro| ro.is_some());
     let attribute = keyword(b"attribute");
-    let member_raw = readonly - attribute + typ() + name() - semi();
+    let member_raw = attribs + readonly - attribute + typ() + name() - semi();
 
-    member_raw.map(move |((readonly, typ), name)| {
-        Member::Attribute(AttributeDef {
-            readonly,
-            name,
-            typ,
-        })
+    member_raw.map(move |(((attribs, readonly), typ), name)| AttributeDef {
+        readonly,
+        name,
+        typ,
+        attribs,
     })
 }
 
 fn value<'a>() -> Parser<'a, u8, String> {
-    name()
+    // TODO: bug - I don't distinguish between "value" and value -- will need to fix
+    name() | string()
 }
 
+fn enum_def<'a>() -> Parser<'a, u8, EnumDef> {
+    // enum DocumentReadyState { "loading", "interactive", "complete" };
+    (keyword(b"enum") * name() - opc() + list(string(), keyword(b",")) - clc() - semi())
+        .map(|(name, options)| EnumDef { name, options })
+}
 fn implements_stmt<'a>() -> Parser<'a, u8, ImplementsStmt> {
     // Foo implements Bar;
     let raw = typ() - keyword(b"implements") + typ() - semi();
@@ -217,57 +298,82 @@ fn argument_list<'a>() -> Parser<'a, u8, Vec<ArgDef>> {
     spaced(list(argument(), sym(b',')))
 }
 
-fn attrib<'a>() -> Parser<'a, u8, ()> {
+fn attrib_list<'a>() -> Parser<'a, u8, Vec<AttribDef>> {
+    let attrib =
+        (name() + (keyword(b"=") * value()).opt()).map(|(name, value)| AttribDef { name, value });
+
+    let comma_sep = keyword(b"[") * list(attrib, keyword(b",")) - keyword(b"]");
+
+    let list = comma_sep.repeat(0..);
+
+    list.map(|list_of_lists| {
+        let mut result = vec![];
+        for outer in list_of_lists.into_iter() {
+            for inner in outer.into_iter() {
+                result.push(inner);
+            }
+        }
+        result
+    })
+}
+
+fn attrib<'a>() -> Parser<'a, u8, AttribDef> {
     // [PutForwards=value]
     // [OverrideBuiltins]
     // [NamedConstructor=Audio(optional DOMString src)]
-    (keyword(b"[") * name() - keyword(b"]")).discard()
+    (keyword(b"[") * name() + (keyword(b"=") * value()).opt() - keyword(b"]"))
+        .map(|(name, value)| AttribDef { name, value })
 }
 
-fn getter<'a>() -> Parser<'a, u8, Member> {
+fn getter<'a>() -> Parser<'a, u8, GetterDef> {
     // getter DOMString (DOMString name, DOMString value);
     let getter_raw = keyword(b"legacycaller").opt() * keyword(b"getter") * typ() + name().opt()
         - op()
         + argument_list()
         - cl()
         - semi();
-    getter_raw.map(move |((typ, name), args)| Member::Getter(GetterDef { args, name, typ }))
+    getter_raw.map(move |((typ, name), args)| GetterDef { args, name, typ })
 }
 
-fn indexer<'a>() -> Parser<'a, u8, Member> {
+fn indexer<'a>() -> Parser<'a, u8, IndexerDef> {
     // DOMString (DOMString name, DOMString value);
     let indexer_raw =
         keyword(b"legacycaller").opt() * typ() - op() + argument_list() - cl() - semi();
-    indexer_raw.map(move |(typ, args)| Member::Indexer(IndexerDef { args, typ }))
+    indexer_raw.map(move |(typ, args)| IndexerDef { args, typ })
 }
 
-fn deleter<'a>() -> Parser<'a, u8, Member> {
+fn deleter<'a>() -> Parser<'a, u8, DeleterDef> {
     // deleter void (DOMString name);
     let deleter_raw = keyword(b"legacycaller").opt() * keyword(b"deleter") * typ() - op()
         + argument_list()
         - cl()
         - semi();
-    deleter_raw.map(move |(typ, args)| Member::Deleter(DeleterDef { args, typ }))
+    deleter_raw.map(move |(typ, args)| DeleterDef { args, typ })
 }
 
-fn setter<'a>() -> Parser<'a, u8, Member> {
+fn setter<'a>() -> Parser<'a, u8, SetterDef> {
     // setter creator void (DOMString name, DOMString value);
     let setter_raw = keyword(b"legacycaller").opt() * keyword(b"setter") * name() + typ() - op()
         + argument_list()
         - cl()
         - semi();
-    setter_raw.map(move |((name, typ), args)| Member::Setter(SetterDef { name, args, typ }))
+    setter_raw.map(move |((name, typ), args)| SetterDef { name, args, typ })
 }
 
-fn function<'a>() -> Parser<'a, u8, Member> {
+fn function<'a>() -> Parser<'a, u8, FunctionDef> {
     //HTMLAllCollection tags(DOMString tagName);
     let function_raw =
         keyword(b"legacycaller").opt() * typ() + name() - op() + argument_list() - cl() - semi();
-    function_raw.map(|((typ, name), args)| Member::Function(FunctionDef { name, args, typ }))
+    function_raw.map(|((typ, name), args)| FunctionDef { name, args, typ })
 }
 
 fn member<'a>() -> Parser<'a, u8, Member> {
-    attribute() | getter() | indexer() | setter() | deleter() | function()
+    attribute().map(|a| Member::Attribute(a))
+        | getter().map(|g| Member::Getter(g))
+        | indexer().map(|i| Member::Indexer(i))
+        | setter().map(|s| Member::Setter(s))
+        | deleter().map(|d| Member::Deleter(d))
+        | function().map(|f| Member::Function(f))
 }
 
 fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
@@ -275,13 +381,15 @@ fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
 }
 
 fn interface<'a>() -> Parser<'a, u8, Interface> {
-    let interface = attrib().repeat(0..) * keyword(b"interface") * name()
+    let interface = attrib_list() - keyword(b"partial").opt().discard() * keyword(b"interface")
+        + name()
         + (keyword(b":") * name()).opt()
         - keyword(b"{")
         + member_list()
         - keyword(b"}")
         - semi();
-    interface.map(|((name, supr), members)| Interface {
+    interface.map(|(((attribs, name), supr), members)| Interface {
+        attribs,
         name,
         supr,
         members,
@@ -291,6 +399,22 @@ fn interface<'a>() -> Parser<'a, u8, Interface> {
 fn stmt<'a>() -> Parser<'a, u8, Statement> {
     interface().map(|i| Statement::Interface(i))
         | implements_stmt().map(|i| Statement::ImplementsStmt(i))
+        | callback().map(|c| Statement::CallbackStmt(c))
+        | enum_def().map(|e| Statement::EnumStmt(e))
+}
+
+fn string<'a>() -> Parser<'a, u8, String> {
+    let special_char = sym(b'\\')
+        | sym(b'/')
+        | sym(b'"')
+        | sym(b'b').map(|_| b'\x08')
+        | sym(b'f').map(|_| b'\x0C')
+        | sym(b'n').map(|_| b'\n')
+        | sym(b'r').map(|_| b'\r')
+        | sym(b't').map(|_| b'\t');
+    let escape_sequence = sym(b'\\') * special_char;
+    let string = sym(b'"') * (none_of(b"\\\"") | escape_sequence).repeat(0..) - sym(b'"');
+    string.convert(String::from_utf8)
 }
 
 fn idl<'a>() -> Parser<'a, u8, Vec<Statement>> {
@@ -307,7 +431,7 @@ mod test {
         ( $ parser: expr, $input: expr ) => {
             let terminating_parser = $parser - space() - end();
             let res = terminating_parser.parse($input);
-            if let Err(e) = res {
+            if let Err(_) = res {
                 panic!("parser failed to match and consume everything")
             }
         };
@@ -319,7 +443,7 @@ mod test {
                     // it parsed, but was it right?
                     assert_eq!(answer, $expected)
                 }
-                Err(e) => {
+                Err(_) => {
                     //
                     panic!("parser failed to match and consume everything")
                 }
@@ -337,10 +461,18 @@ mod test {
         assert_consumes_all![space(), b"  "];
         assert_consumes_all![space(), b"  \t \n \r "];
 
-        assert_consumes_all![comment(), b"//\r"];
-        assert_consumes_all![comment(), b"//\n"];
-        assert_consumes_all![comment(), b"//\r\n"];
-        assert_consumes_all![comment(), b"// xyz \r\n"];
+        assert_consumes_all![line_comment(), b"//\r"];
+        assert_consumes_all![line_comment(), b"//\n"];
+        assert_consumes_all![line_comment(), b"//\r\n"];
+        assert_consumes_all![line_comment(), b"// xyz \r\n"];
+
+        assert_consumes_all![star_comment(), b"/*  thing */"];
+        assert_consumes_all![star_comment(), b"/*  thing \r\n thing */"];
+
+        assert_consumes_all!(
+            enum_def(),
+            b"enum DocumentReadyState { \"loading\", \"interactive\", \"complete\" };"
+        );
 
         assert_consumes_all![typ(), b"TypeName"];
         assert_consumes_all![typ(), b"(TypeName1 or TypeName2)"];
@@ -367,8 +499,11 @@ mod test {
             }
         );
 
-        assert_consumes_all!(attrib(), b"[OverrideBuiltins]");
-        // assert_consumes_all!(attrib(), b"[PutForwards=value]");
+        assert_consumes_all!(attrib_list(), b"[OverrideBuiltins]");
+        assert_consumes_all!(attrib_list(), b"[A][B]");
+        assert_consumes_all!(attrib_list(), b"[A,B]");
+        assert_consumes_all!(attrib_list(), b"[A,B][C]");
+        assert_consumes_all!(attrib_list(), b"[PutForwards=value]");
         // assert_consumes_all!(
         //     attrib(),
         //     b"[NamedConstructor=Audio(optional DOMString src)]"
@@ -394,8 +529,14 @@ mod test {
         assert_consumes_all!(type_name(), b"unsigned long");
         assert_consumes_all!(type_name(), b"DomString");
 
+        assert_consumes_all!(callback(), b"callback FileCallback = void (File file);");
+        assert_consumes_all!(string(), b"\"thing\"");
+
         assert_consumes_all!(typ(), b"HTMLOptionElement?");
-        assert_consumes_all!(member(), b"attribute DomString length;");
+        assert_consumes_all!(
+            member(),
+            b"[PutForwards=href, Unforgeable] readonly attribute DomString length;"
+        );
         assert_consumes_all!(
             member(),
             b"legacycaller HTMLOptionElement? (DOMString name);"
@@ -408,6 +549,7 @@ mod test {
                 readonly: false,
                 name: String::from("value"),
                 typ: TypeDef::from_str("DOMString"),
+                attribs: vec![]
             })
         );
 
@@ -418,6 +560,7 @@ mod test {
                 readonly: true,
                 name: String::from("value"),
                 typ: TypeDef::from_str("DOMString"),
+                attribs: vec![]
             })
         );
 
@@ -501,8 +644,7 @@ mod test {
             b"interface foo {};",
             Interface {
                 name: String::from("foo"),
-                supr: None,
-                members: vec![]
+                ..Default::default()
             }
         ];
         assert_consumes_all!(
@@ -516,7 +658,7 @@ mod test {
             Interface {
                 name: "foo".into(),
                 supr: Some("bar".into()),
-                members: vec![]
+                ..Default::default()
             }
         );
 
@@ -530,11 +672,13 @@ attribute HTMLElement body;",
                     readonly: true,
                     name: String::from("value"),
                     typ: TypeDef::from_str("DOMString"),
+                    attribs: vec![]
                 }),
                 Member::Attribute(AttributeDef {
                     readonly: false,
                     name: String::from("body"),
                     typ: TypeDef::from_str("HTMLElement"),
+                    attribs: vec![]
                 }),
             ]
         );
@@ -548,19 +692,22 @@ attribute HTMLElement body;",
 ",
             Interface {
                 name: String::from("Window"),
-                supr: None,
+
                 members: vec![
                     Member::Attribute(AttributeDef {
                         readonly: true,
                         name: String::from("label"),
                         typ: TypeDef::from_str("DOMString"),
+                        attribs: vec![]
                     }),
                     Member::Attribute(AttributeDef {
                         readonly: false,
                         name: String::from("defaultSelected"),
                         typ: TypeDef::from_str("boolean"),
+                        attribs: vec![]
                     }),
-                ]
+                ],
+                ..Default::default()
             }
         );
 
@@ -606,8 +753,7 @@ attribute HTMLElement body;",
             Err(pom::Error::Mismatch { message, position }) => {
                 let start_str = &byte_vec[0..position];
                 let line = count_lines(start_str) + 1;
-                let start_str = std::str::from_utf8(start_str).unwrap();
-                let end = min(position + 20, file_content.len() - position);
+                let end = min(position + 50, file_content.len() - position);
                 let extract = &file_content[position..end];
                 let extract = extract
                     .to_string()
@@ -617,11 +763,11 @@ attribute HTMLElement body;",
                 let err_location = format!("{}:{}:{}", file_path_str, line, 1);
                 // thread 'idl_parser::test::parse_full_html5_file' panicked at 'whoops', src/idl_parser.rs:428:9
                 let better_message = format!(
-                    "thread 'idl_parser::test::parse_full_html5_file' panicked at '{}', {}",
-                    extract, err_location
+                    "thread 'idl_parser::test::parse_full_html5_file' panicked at 'parsing', {}\n\n{}",
+                    err_location, extract
                 );
                 println!("{}", better_message);
-                panic!(better_message)
+                panic!(message)
             }
             Err(e) => panic!("{}", e),
         };

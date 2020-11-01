@@ -1,33 +1,17 @@
-
-interface RadioNodeList : NodeList {
-          attribute DOMString value;
-};
-
-interface HTMLScriptElement : HTMLElement {
-           attribute DOMString src;
-           attribute DOMString type;
-           attribute DOMString charset;
-           attribute boolean async;
-           attribute boolean defer;
-           attribute DOMString crossOrigin;
-           attribute DOMString text;
-};
-interface HTMLTemplateElement : HTMLElement {
-  readonly attribute DocumentFragment content;
-};
-
 interface HTMLAllCollection : HTMLCollection {
   // inherits length and item(unsigned long index)
   (HTMLCollection or Element)? item(DOMString name);
   legacycaller getter (HTMLCollection or Element)? namedItem(DOMString name); // shadows inherited namedItem()
   HTMLAllCollection tags(DOMString tagName);
 };
-
 interface HTMLFormControlsCollection : HTMLCollection {
   // inherits length and item()
   legacycaller getter (RadioNodeList or Element)? namedItem(DOMString name); // shadows inherited namedItem()
 };
 
+interface RadioNodeList : NodeList {
+          attribute DOMString value;
+};
 interface HTMLOptionsCollection : HTMLCollection {
   // inherits item()
            attribute unsigned long length; // shadows inherited length
@@ -826,7 +810,18 @@ interface ValidityState {
   readonly attribute boolean customError;
   readonly attribute boolean valid;
 };
-
+interface HTMLScriptElement : HTMLElement {
+           attribute DOMString src;
+           attribute DOMString type;
+           attribute DOMString charset;
+           attribute boolean async;
+           attribute boolean defer;
+           attribute DOMString crossOrigin;
+           attribute DOMString text;
+};
+interface HTMLTemplateElement : HTMLElement {
+  readonly attribute DocumentFragment content;
+};
 typedef (CanvasRenderingContext2D or WebGLRenderingContext) RenderingContext;
 
 interface HTMLCanvasElement : HTMLElement {
