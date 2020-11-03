@@ -166,28 +166,6 @@ enum Value {
     Number(f64),
 }
 
-fn fn_signature<'a>() -> Parser<'a, u8, FunctionSignature> {
-    (typ() - op() + argument_list() - cl())
-        .map(|(return_type, args)| FunctionSignature { return_type, args })
-}
-
-fn callback<'a>() -> Parser<'a, u8, Callback> {
-    // callback FileCallback = void (File file);
-    (attrib_list() - keyword(b"callback") + name() - keyword(b"=") + fn_signature() - semi()).map(
-        |((attribs, name), signature)| Callback {
-            attribs,
-            name,
-            signature,
-        },
-    )
-}
-
-fn const_<'a>() -> Parser<'a, u8, Constant> {
-    // const unsigned short NONE = 0;
-    (keyword(b"const") * typ() + name() - keyword(b"=") + value() - semi())
-        .map(|((typ, name), value)| Constant { name, typ, value })
-}
-
 #[derive(Debug, PartialEq)]
 pub struct Callback {
     attribs: Vec<Attrib>,
@@ -244,8 +222,30 @@ fn is_underscore(term: u8) -> bool {
     term == b'_'
 }
 
-fn keyword<'a>(literal: &'static [u8]) -> Parser<'a, u8, ()> {
-    spaced(seq(literal)).discard().name("keyword")
+fn function_signature<'a>() -> Parser<'a, u8, FunctionSignature> {
+    (type_() - op() + argument_list() - cl())
+        .map(|(return_type, args)| FunctionSignature { return_type, args })
+}
+
+fn callback<'a>() -> Parser<'a, u8, Callback> {
+    // callback FileCallback = void (File file);
+    (attrib_list() - keyword(b"callback") + identifier() - keyword(b"=") + function_signature()
+        - semi())
+    .map(|((attribs, name), signature)| Callback {
+        attribs,
+        name,
+        signature,
+    })
+}
+
+fn constant<'a>() -> Parser<'a, u8, Constant> {
+    // const unsigned short NONE = 0;
+    (keyword(b"const") * type_() + identifier() - keyword(b"=") + value() - semi())
+        .map(|((typ, name), value)| Constant { name, typ, value })
+}
+
+fn keyword<'a>(keyword: &'static [u8]) -> Parser<'a, u8, ()> {
+    literal(keyword).discard().name("keyword")
 }
 
 fn literal<'a>(literal: &'static [u8]) -> Parser<'a, u8, String> {
@@ -306,7 +306,7 @@ fn comment<'a>() -> Parser<'a, u8, ()> {
     line_comment() | star_comment()
 }
 
-fn name<'a>() -> Parser<'a, u8, String> {
+fn identifier<'a>() -> Parser<'a, u8, String> {
     let it = ((is_a(alpha) | is_a(is_underscore))
         + (is_a(alphanum) | is_a(is_underscore)).repeat(0..))
     .map(|(first, rest)| format!("{}{}", first as char, String::from_utf8(rest).unwrap()));
@@ -315,15 +315,14 @@ fn name<'a>() -> Parser<'a, u8, String> {
 }
 
 fn type_name<'a>() -> Parser<'a, u8, String> {
-    ((literal(b"unsigned") | literal(b"unsigned") | literal(b"unrestricted")).opt() + name()).map(
-        |(prefix, name)| match prefix {
+    ((literal(b"unsigned") | literal(b"unsigned") | literal(b"unrestricted")).opt() + identifier())
+        .map(|(prefix, name)| match prefix {
             Some(prefix) => format!("{} {}", prefix, name),
             None => name,
-        },
-    )
+        })
 }
 
-fn typ<'a>() -> Parser<'a, u8, Type> {
+fn type_<'a>() -> Parser<'a, u8, Type> {
     //(VideoTrack or AudioTrack or TextTrack)
     let compound_type = (op() * list(type_name(), keyword(b"or")) - cl()).map(|names| names);
 
@@ -348,7 +347,7 @@ fn attribute<'a>() -> Parser<'a, u8, Attribute> {
     let attribs = attrib_list();
     let readonly = keyword(b"readonly").opt().map(|ro| ro.is_some());
     let attribute = keyword(b"attribute");
-    let raw = attribs + readonly - attribute + typ() + name() - semi();
+    let raw = attribs + readonly - attribute + type_() + identifier() - semi();
 
     raw.map(move |(((attribs, readonly), typ), name)| Attribute {
         readonly,
@@ -361,7 +360,7 @@ fn attribute<'a>() -> Parser<'a, u8, Attribute> {
 fn field<'a>() -> Parser<'a, u8, Field> {
     // [PutForwards=href, Unforgeable] attribute DOMString value;
     let attribs = attrib_list();
-    let raw = attribs + typ() + name() - semi();
+    let raw = attribs + type_() + identifier() - semi();
 
     raw.map(move |((attribs, typ), name)| Field { name, typ, attribs })
 }
@@ -379,41 +378,43 @@ fn number<'a>() -> Parser<'a, u8, f64> {
 
 fn value<'a>() -> Parser<'a, u8, Value> {
     number().map(|f| Value::Number(f))
-        | name().map(|s| Value::Identifier(s))
+        | identifier().map(|s| Value::Identifier(s))
         | string().map(|s| Value::String(s))
 }
 
 fn enum_<'a>() -> Parser<'a, u8, Enum> {
     // enum DocumentReadyState { "loading", "interactive", "complete" };
-    (keyword(b"enum") * name() - opc() + list(string(), keyword(b",")) - clc() - semi())
+    (keyword(b"enum") * identifier() - opc() + list(string(), keyword(b",")) - clc() - semi())
         .map(|(name, options)| Enum { name, options })
 }
 
 fn implements_stmt<'a>() -> Parser<'a, u8, ImplementsStmt> {
     // Foo implements Bar;
-    let raw = typ() - keyword(b"implements") + typ() - semi();
+    let raw = type_() - keyword(b"implements") + type_() - semi();
     raw.map(|(typ, implements)| ImplementsStmt { typ, implements })
 }
 
 fn argument<'a>() -> Parser<'a, u8, Argument> {
     // (HTMLOptionElement or HTMLOptGroupElement) element, optional (HTMLElement or long)? before = null
-    let parser_raw = keyword(b"optional").opt() * typ() + name() + (keyword(b"=") * value()).opt();
+    let parser_raw =
+        keyword(b"optional").opt() * type_() + identifier() + (keyword(b"=") * value()).opt();
     parser_raw.map(move |((typ, name), default_value)| Argument {
         name,
         typ,
         default_value,
     })
 }
+
 fn argument_list<'a>() -> Parser<'a, u8, Vec<Argument>> {
     spaced(list(argument(), sym(b',')))
 }
 
 fn attrib<'a>() -> Parser<'a, u8, Attrib> {
-    let attrib_rhs = fn_signature().map(|f| AttribRHS::FunctionSignature(f))
-        | name().map(|v| AttribRHS::Identifier(v))
+    let attrib_rhs = function_signature().map(|f| AttribRHS::FunctionSignature(f))
+        | identifier().map(|v| AttribRHS::Identifier(v))
         | string().map(|s| AttribRHS::Literal(s));
 
-    (name() + (keyword(b"=") * attrib_rhs).opt())
+    (identifier() + (keyword(b"=") * attrib_rhs).opt())
         .map(|(name, value)| Attrib::Attrib(AttribDef { name, value }))
 }
 
@@ -440,24 +441,24 @@ fn attrib_list<'a>() -> Parser<'a, u8, Vec<Attrib>> {
 
 fn getter<'a>() -> Parser<'a, u8, Getter> {
     // getter DOMString (DOMString name, DOMString value);
-    let getter_raw = keyword(b"legacycaller").opt() * keyword(b"getter") * typ() + name().opt()
-        - op()
-        + argument_list()
-        - cl()
-        - semi();
+    let getter_raw =
+        keyword(b"legacycaller").opt() * keyword(b"getter") * type_() + identifier().opt() - op()
+            + argument_list()
+            - cl()
+            - semi();
     getter_raw.map(move |((typ, name), args)| Getter { args, name, typ })
 }
 
 fn indexer<'a>() -> Parser<'a, u8, Indexer> {
     // DOMString (DOMString name, DOMString value);
     let indexer_raw =
-        keyword(b"legacycaller").opt() * typ() - op() + argument_list() - cl() - semi();
+        keyword(b"legacycaller").opt() * type_() - op() + argument_list() - cl() - semi();
     indexer_raw.map(move |(typ, args)| Indexer { args, typ })
 }
 
 fn deleter<'a>() -> Parser<'a, u8, Deleter> {
     // deleter void (DOMString name);
-    let deleter_raw = keyword(b"legacycaller").opt() * keyword(b"deleter") * typ() - op()
+    let deleter_raw = keyword(b"legacycaller").opt() * keyword(b"deleter") * type_() - op()
         + argument_list()
         - cl()
         - semi();
@@ -466,7 +467,8 @@ fn deleter<'a>() -> Parser<'a, u8, Deleter> {
 
 fn setter<'a>() -> Parser<'a, u8, Setter> {
     // setter creator void (DOMString name, DOMString value);
-    let setter_raw = keyword(b"legacycaller").opt() * keyword(b"setter") * name() + typ() - op()
+    let setter_raw = keyword(b"legacycaller").opt() * keyword(b"setter") * identifier() + type_()
+        - op()
         + argument_list()
         - cl()
         - semi();
@@ -475,13 +477,15 @@ fn setter<'a>() -> Parser<'a, u8, Setter> {
 
 fn function<'a>() -> Parser<'a, u8, Function> {
     //HTMLAllCollection tags(DOMString tagName);
-    let function_raw =
-        keyword(b"legacycaller").opt() * typ() + name() - op() + argument_list() - cl() - semi();
+    let function_raw = keyword(b"legacycaller").opt() * type_() + identifier() - op()
+        + argument_list()
+        - cl()
+        - semi();
     function_raw.map(|((typ, name), args)| Function { name, args, typ })
 }
 
 fn member<'a>() -> Parser<'a, u8, Member> {
-    const_().map(|c| Member::Constant(c))
+    constant().map(|c| Member::Constant(c))
         | getter().map(|g| Member::Getter(g))
         | indexer().map(|i| Member::Indexer(i))
         | setter().map(|s| Member::Setter(s))
@@ -499,8 +503,8 @@ fn member_list<'a>() -> Parser<'a, u8, Vec<Member>> {
 
 fn interface<'a>() -> Parser<'a, u8, Interface> {
     let interface = attrib_list() - keyword(b"partial").opt().discard() * keyword(b"interface")
-        + name()
-        + (keyword(b":") * name()).opt()
+        + identifier()
+        + (keyword(b":") * identifier()).opt()
         - keyword(b"{")
         + member_list()
         - keyword(b"}")
@@ -515,13 +519,13 @@ fn interface<'a>() -> Parser<'a, u8, Interface> {
 
 fn typedef<'a>() -> Parser<'a, u8, TypeDef> {
     // typedef (CanvasRenderingContext2D or WebGLRenderingContext) RenderingContext;
-    (keyword(b"typedef") * typ() + name() - semi()).map(|(typ, name)| TypeDef { typ, name })
+    (keyword(b"typedef") * type_() + identifier() - semi()).map(|(typ, name)| TypeDef { typ, name })
 }
 
 fn dictionary<'a>() -> Parser<'a, u8, Dictionary> {
     let interface = attrib_list() - keyword(b"partial").opt().discard() * keyword(b"dictionary")
-        + name()
-        + (keyword(b":") * name()).opt()
+        + identifier()
+        + (keyword(b":") * identifier()).opt()
         - keyword(b"{")
         + member_list()
         - keyword(b"}")
@@ -606,16 +610,16 @@ mod test {
         assert_consumes_all!(type_name(), b"unrestricted double");
         assert_consumes_all!(type_name(), b"DomString");
 
-        assert_consumes_all![typ(), b"TypeName"];
-        assert_consumes_all![typ(), b"(TypeName1 or TypeName2)"];
-        assert_consumes_all![typ(), b"unsigned short"];
-        assert_consumes_all!(typ(), b"HTMLOptionElement?");
+        assert_consumes_all![type_(), b"TypeName"];
+        assert_consumes_all![type_(), b"(TypeName1 or TypeName2)"];
+        assert_consumes_all![type_(), b"unsigned short"];
+        assert_consumes_all!(type_(), b"HTMLOptionElement?");
 
-        assert_consumes_all![const_(), b"const unsigned short X = 2;"];
-        assert_consumes_all![const_(), b"const unsigned short X = \"2\";"];
-        assert_consumes_all![const_(), b"const Zorp XXX = \"x\";"];
-        assert_consumes_all![const_(), b"const unsigned short X = \"x\";"];
-        assert_consumes_all![const_(), b"const unsigned short NETWORK_EMPTY = 0;"];
+        assert_consumes_all![constant(), b"const unsigned short X = 2;"];
+        assert_consumes_all![constant(), b"const unsigned short X = \"2\";"];
+        assert_consumes_all![constant(), b"const Zorp XXX = \"x\";"];
+        assert_consumes_all![constant(), b"const unsigned short X = \"x\";"];
+        assert_consumes_all![constant(), b"const unsigned short NETWORK_EMPTY = 0;"];
         assert_consumes_all![member(), b"const unsigned short X = \"x\";"];
 
         assert_consumes_all![line_comment(), b"//\r"];
@@ -674,7 +678,7 @@ mod test {
             b"[Constructor(DOMString type, optional TrackEventInit eventInitDict)]"
         );
 
-        assert_consumes_all!(fn_signature(), b"Image(Foo bar)");
+        assert_consumes_all!(function_signature(), b"Image(Foo bar)");
         assert_consumes_all!(attrib_list(), b"[NamedConstructor=Image(Foo bar)]");
         assert_consumes_all!(
             attrib_list(),
