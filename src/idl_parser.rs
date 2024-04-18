@@ -1,36 +1,37 @@
+use crate::Result;
 use pom::char_class::{alpha, alphanum, multispace};
 use pom::parser::*;
 use std::str::FromStr;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
-    readonly: bool,
-    name: String,
-    typ: Type,
-    attribs: Vec<Attrib>,
+    pub readonly: bool,
+    pub name: String,
+    pub typ: Type,
+    pub attribs: Vec<Attrib>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
-    name: String,
-    typ: Type,
-    attribs: Vec<Attrib>,
+    pub name: String,
+    pub typ: Type,
+    pub attribs: Vec<Attrib>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Dictionary {
-    attribs: Vec<Attrib>,
-    name: String,
-    supr: Option<String>,
-    members: Vec<Member>,
+    pub attribs: Vec<Attrib>,
+    pub name: String,
+    pub supr: Option<String>,
+    pub members: Vec<Member>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Interface {
-    attribs: Vec<Attrib>,
-    name: String,
-    supr: Option<String>,
-    members: Vec<Member>,
+    pub attribs: Vec<Attrib>,
+    pub name: String,
+    pub supr: Option<String>,
+    pub members: Vec<Member>,
 }
 
 impl Default for Interface {
@@ -44,49 +45,49 @@ impl Default for Interface {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Attrib {
     Attrib(AttribDef),
     Constructor(Constructor),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AttribDef {
-    name: String,
-    value: Option<AttribRHS>,
+    pub name: String,
+    pub value: Option<AttribRHS>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Constructor {
-    args: Vec<Argument>,
+    pub args: Vec<Argument>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AttribRHS {
     Identifier(String),
     Literal(String),
     FunctionSignature(FunctionSignature),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Argument {
     name: String,
     typ: Type,
     default_value: Option<Value>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Getter {
-    args: Vec<Argument>,
-    name: Option<String>,
-    typ: Type,
+    pub args: Vec<Argument>,
+    pub name: Option<String>,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Type {
-    names: Vec<String>,
-    optional: bool,
-    is_rest: bool,
+    pub names: Vec<String>,
+    pub optional: bool,
+    pub is_rest: bool,
 }
 
 impl Type {
@@ -99,45 +100,45 @@ impl Type {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Deleter {
-    args: Vec<Argument>,
-    typ: Type,
+    pub args: Vec<Argument>,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Setter {
-    args: Vec<Argument>,
-    name: String,
-    typ: Type,
+    pub args: Vec<Argument>,
+    pub name: String,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImplementsStmt {
-    typ: Type,
-    implements: Type,
+    pub typ: Type,
+    pub implements: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function {
-    args: Vec<Argument>,
-    name: String,
-    typ: Type,
+    pub args: Vec<Argument>,
+    pub name: String,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Indexer {
-    args: Vec<Argument>,
-    typ: Type,
+    pub args: Vec<Argument>,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Enum {
     options: Vec<String>,
     name: String,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Interface(Interface),
     ImplementsStmt(ImplementsStmt),
@@ -147,7 +148,7 @@ pub enum Statement {
     TypeDefStmt(TypeDef),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Member {
     Attribute(Attribute),
     Getter(Getter),
@@ -159,37 +160,37 @@ pub enum Member {
     Field(Field),
 }
 
-#[derive(Debug, PartialEq)]
-enum Value {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
     String(String),
     Identifier(String),
     Number(f64),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Callback {
-    attribs: Vec<Attrib>,
-    name: String,
-    signature: FunctionSignature,
+    pub attribs: Vec<Attrib>,
+    pub name: String,
+    pub signature: FunctionSignature,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Constant {
-    name: String,
-    typ: Type,
-    value: Value,
+    pub name: String,
+    pub typ: Type,
+    pub value: Value,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeDef {
-    name: String,
-    typ: Type,
+    pub name: String,
+    pub typ: Type,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSignature {
-    return_type: Type,
-    args: Vec<Argument>,
+    pub return_type: Type,
+    pub args: Vec<Argument>,
 }
 
 /// space, tab, etc
@@ -569,7 +570,8 @@ pub fn idl<'a>() -> Parser<'a, u8, Vec<Statement>> {
 mod test {
     use super::*;
     use std::cmp::min;
-    use std::error::Error;
+    use std::path::{Path, PathBuf};
+    use std::{fs, io};
 
     macro_rules! assert_consumes_all {
         ( $ parser: expr, $input: expr ) => {
@@ -596,7 +598,7 @@ mod test {
     }
 
     #[test]
-    fn parse_keywords() -> Result<(), Box<dyn Error>> {
+    fn parse_keywords() -> Result<()> {
         assert_consumes_all![eol(), b"\r"];
         assert_consumes_all![eol(), b"\r\n"];
         assert_consumes_all![eol(), b"\n"];
@@ -903,10 +905,29 @@ attribute HTMLElement body;",
     #[test]
     fn parse_full_html5_file() {
         let file_path_str = "assets/html5.idl";
-        assert_parse_file(file_path_str);
+        assert_parse_file(PathBuf::from_str(file_path_str).unwrap().as_path());
     }
 
-    fn assert_parse_file(file_path_str: &str) {
+    #[test]
+    fn parse_all_files() -> Result<()> {
+        let mut entries = fs::read_dir("assets/idl")?
+            .map(|res| res.map(|e| e.path()))
+            //.filter(|f| )
+            .collect::<std::result::Result<Vec<_>, io::Error>>()?;
+
+        entries.sort();
+
+        for file_path_str in entries {
+            println!("");
+            println!("{}", file_path_str.to_str().unwrap());
+            println!("");
+            assert_parse_file(file_path_str.as_path());
+        }
+
+        Ok(())
+    }
+
+    fn assert_parse_file(file_path_str: &Path) {
         let byte_vec: Vec<u8> = std::fs::read(file_path_str).unwrap();
         let file_content =
             String::from_utf8(byte_vec.clone()).expect("should be able to read the file");
@@ -924,7 +945,7 @@ attribute HTMLElement body;",
                     .replace("\n", "\\n")
                     .replace("\r", "\\r")
                     .replace("\t", "\\t");
-                let err_location = format!("{}:{}:{}", file_path_str, line, 1);
+                let err_location = format!("{}:{}:{}", file_path_str.to_str().unwrap(), line, 1);
                 // thread 'idl_parser::test::parse_full_html5_file' panicked at 'whoops', src/idl_parser.rs:428:9
                 let better_message = format!(
                     "thread 'idl_parser::test::parse_full_html5_file' panicked at 'parsing', {}\n\n{}",
