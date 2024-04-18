@@ -1,5 +1,7 @@
 # Pure-rust
 
+**Warning! ABANDONWARE!**
+
 A strongly typed HTML generation language that uses rust's type system, and the official specification of HTML from
  the w3c, to make sure you can't build invalid HTML documents. 
  
